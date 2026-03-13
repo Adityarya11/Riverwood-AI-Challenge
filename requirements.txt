@@ -1,0 +1,12 @@
+# Web Framework
+fastapi
+uvicorn[standard]
+
+# Data Validation
+pydantic
+
+# Environment Variables
+python-dotenv
+
+# HTTP Client (VAPI REST API calls)
+httpx
