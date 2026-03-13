@@ -1,29 +1,21 @@
+# app/main.py
 import json
 import logging
+import os
 from typing import Dict, Any
 
 from fastapi import FastAPI, Request, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from app.models import (
-    CallRequest,
-    BulkCallRequest,
-    CallResponse,
-    HealthResponse,
-)
-from app.memory import MemoryStore
-from app.services import trigger_outbound_call, trigger_bulk_calls
-from app.orchestrator import find_users_needing_updates
-import os
+from app.models import CallRequest, BulkCallRequest, CallResponse, HealthResponse
+from app.memory import MemoryStore, init_db
+from app.services import trigger_outbound_call, trigger_bulk_calls, init_tts_cache_dir
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="Riverwood AI Voice Agent")
+app = FastAPI(title="Riverwood AI Voice Agent (Prototype)")
 
 app.add_middleware(
     CORSMiddleware,
@@ -33,10 +25,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Mount the static directory to serve cached TTS audio
-os.makedirs(os.path.join(os.getcwd(), "cache", "tts"), exist_ok=True)
+# ensure TTS cache dir exists and serve it via /static
+TTS_STATIC_DIR = os.path.join(os.getcwd(), "cache")
+init_tts_cache_dir(TTS_STATIC_DIR)  # ensures folder exists
 app.mount("/static", StaticFiles(directory="cache"), name="static")
 
+
+# ── Tool handlers (unchanged behaviour) ────────────────────────────────────────
 def handle_record_site_visit(call_id: str, args: Dict[str, Any]) -> str:
     user_id = MemoryStore.get_user_for_call(call_id)
     if not user_id:
@@ -48,8 +43,9 @@ def handle_record_site_visit(call_id: str, args: Dict[str, Any]) -> str:
     notes = args.get("notes")
 
     MemoryStore.record_visit_intention(user_id, wants_to_visit, preferred_date, notes)
-    # Update AI CRM state
-    MemoryStore.update_user_state(user_id, visit_interest=wants_to_visit)
+    # Update user state in DB
+    MemoryStore.update_user_state(user_id, visit_interest=bool(wants_to_visit))
+
     user = MemoryStore.get_user(user_id)
     name = user["name"] if user else "the customer"
 
@@ -61,6 +57,7 @@ def handle_record_site_visit(call_id: str, args: Dict[str, Any]) -> str:
     logger.info(f"Visit recorded: {name} does not want to visit at this time")
     return f"Noted that {name} is not planning to visit right now."
 
+
 def handle_schedule_callback(call_id: str, args: Dict[str, Any]) -> str:
     user_id = MemoryStore.get_user_for_call(call_id)
     if not user_id:
@@ -70,35 +67,41 @@ def handle_schedule_callback(call_id: str, args: Dict[str, Any]) -> str:
     notes = args.get("notes")
 
     MemoryStore.schedule_callback(user_id, preferred_time, notes)
-    # Update AI CRM state
     MemoryStore.update_user_state(user_id, conversation_stage="callback_pending")
     logger.info(f"Callback scheduled for {user_id} at {preferred_time}")
     return f"Callback scheduled for {preferred_time}. Our team will call back."
+
 
 TOOL_HANDLERS = {
     "record_site_visit": handle_record_site_visit,
     "schedule_callback": handle_schedule_callback,
 }
 
+
+# ── Webhook ────────────────────────────────────────────────────────────────────
 @app.post("/api/webhook")
 async def vapi_webhook(request: Request):
+    """
+    Generic webhook receiver for VAPI/Twilio style providers.
+    Handles tool-calls, end-of-call reports and status updates.
+    """
     try:
         payload = await request.json()
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid JSON payload")
 
-    message = payload.get("message", {})
+    message = payload.get("message", {}) or {}
     msg_type = message.get("type", "unknown")
-    call_id = message.get("call", {}).get("id", "unknown")
+    call_id = (message.get("call") or {}).get("id", "unknown")
 
     logger.info(f"Webhook: type={msg_type} call_id={call_id}")
 
+    # tool-calls (function / tool style)
     if msg_type == "tool-calls":
-        tool_call_list = message.get("toolCallList", [])
+        tool_call_list = message.get("toolCallList", []) or []
         results = []
-
         for tc in tool_call_list:
-            func = tc.get("function", {})
+            func = tc.get("function", {}) or {}
             name = func.get("name", "")
             raw_args = func.get("arguments", {})
 
@@ -116,26 +119,24 @@ async def vapi_webhook(request: Request):
             else:
                 logger.warning(f"Unknown tool called: {name}")
                 result = f"Tool '{name}' is not recognized."
-
             results.append({"toolCallId": tc.get("id", ""), "result": result})
-
         return {"results": results}
 
+    # status update
     if msg_type == "status-update":
         return {"ok": True}
 
+    # end-of-call report: save summary + update user_state
     if msg_type == "end-of-call-report":
-        from datetime import datetime
         user_id = MemoryStore.get_user_for_call(call_id)
         if user_id:
             MemoryStore.save_call_summary(
                 user_id=user_id,
                 summary=message.get("summary", "No summary available"),
                 transcript=message.get("transcript", ""),
-                duration=message.get("artifact", {}).get("duration"),
+                duration=(message.get("artifact") or {}).get("duration"),
             )
-            
-            # UPDATE STATE: Mark that the user has received the latest update
+            # Mark user as updated for the current project version
             user_data = MemoryStore.get_user(user_id)
             if user_data:
                 project_data = MemoryStore.get_construction_update(user_data["project"])
@@ -144,15 +145,17 @@ async def vapi_webhook(request: Request):
                     MemoryStore.update_user_state(
                         user_id,
                         last_update_version=current_update_id,
-                        last_called_at=datetime.now().isoformat(),
-                        conversation_stage="visit_followup"
+                        conversation_stage="visit_followup",
                     )
         return {"ok": True}
 
     return {"ok": True}
 
+
+# ── Call endpoints ────────────────────────────────────────────────────────────
 @app.post("/api/call", response_model=CallResponse)
 async def make_call(req: CallRequest):
+    """Trigger a single outbound call to a user_id."""
     user = MemoryStore.get_user(req.user_id)
     if not user:
         raise HTTPException(status_code=404, detail=f"User '{req.user_id}' not found")
@@ -160,41 +163,28 @@ async def make_call(req: CallRequest):
         call_data = await trigger_outbound_call(req.user_id)
         return CallResponse(status="initiated", call_id=call_data.get("id"), user_id=req.user_id, message=f"Call initiated to {user['name']}")
     except Exception as e:
+        logger.exception("Failed to trigger call")
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/api/morning-campaign")
-async def start_morning_campaign(background_tasks: BackgroundTasks):
-    """Run an orchestrated campaign to call users matching update conditions."""
-    users_to_call = find_users_needing_updates()
-    
-    if not users_to_call:
-        return {"status": "no_updates_needed", "message": "All users are up to date."}
-    
-    background_tasks.add_task(trigger_bulk_calls, users_to_call)
-    logger.info(f"Morning campaign queued for {len(users_to_call)} users.")
-    return {
-        "status": "campaign_queued", 
-        "users_called": len(users_to_call),
-        "user_ids": users_to_call,
-        "message": f"Queued {len(users_to_call)} calls. Processing in background."
-    }
 
-# ─── Data / Inspection Endpoints ───────────────────────────────────────────────
+@app.post("/api/bulk-call")
+async def make_bulk_calls(req: BulkCallRequest):
+    """Trigger multiple outbound calls (uses batching & concurrency controls)."""
+    results = await trigger_bulk_calls(req.user_ids)
+    return {"total": len(req.user_ids), "results": results}
 
+
+# ── Data inspection endpoints ─────────────────────────────────────────────────
 @app.get("/api/users")
 async def list_users():
-    """List all users in the mock database."""
     return MemoryStore.get_all_users()
 
 
 @app.get("/api/users/{user_id}")
 async def get_user(user_id: str):
-    """Get full details for a user including history, state, and visit status."""
-
     user = MemoryStore.get_user(user_id)
     if not user:
         raise HTTPException(status_code=404, detail=f"User '{user_id}' not found")
-
     return {
         "user": user,
         "state": MemoryStore.get_user_state(user_id),
@@ -206,20 +196,24 @@ async def get_user(user_id: str):
 
 @app.get("/api/visits")
 async def list_visits():
-    """List all recorded visit intentions."""
     return MemoryStore.get_all_visit_intentions()
 
 
 @app.get("/api/call-history/{user_id}")
 async def get_call_history(user_id: str):
-    """Get call history for a specific user."""
     return MemoryStore.get_call_history(user_id)
 
 
 @app.get("/api/callbacks")
 async def list_callbacks():
-    """List all scheduled callbacks."""
     return MemoryStore.get_all_callbacks()
+
+
+@app.on_event("startup")
+async def startup_event():
+    # initialize sqlite DB + seed demo users & construction updates
+    await init_db()
+    logger.info("Database initialized and ready.")
 
 
 @app.get("/health", response_model=HealthResponse)
