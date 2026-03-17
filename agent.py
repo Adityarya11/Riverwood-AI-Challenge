@@ -9,24 +9,24 @@ def build_system_prompt(user, construction, is_returning):
     language_instruction = "Reply primarily in natural Hindi/Hinglish." if user.language == "hi" else "Reply in conversational English."
     visit_info = f"Site visits available: {construction.site_visit_available}. Timings: {construction.site_visit_timings}"
     
-    user_status = "This is a RETURNING customer. Acknowledge this naturally." if is_returning else "This is a FIRST TIME call to this customer."
+    user_status = "This is a RETURNING customer. Acknowledge this naturally without being repetitive." if is_returning else "This is a FIRST TIME call to this customer."
     
     if user.site_visit_interest:
-        extra_context = "The customer previously showed interest in a site visit."
+        extra_context = "CRITICAL CRM DATA: The customer previously showed interest in a site visit! You must acknowledge this and ask if they have any remaining questions before they arrive, or provide them with parking/map details if they ask."
     else:
-        extra_context = ""
+        extra_context = "CRM DATA: The customer has not yet scheduled a site visit. You may gently invite them if it flows naturally."
 
     prompt = (
         f"You are Akanksha, a friendly AI calling assistant for Riverwood Projects LLP.\n"
         f"Customer: {user.name} | Project: {user.project}\n"
         f"Status: {user_status}\n"
-        f"Previous Context: {extra_context}\n"
+        f"{extra_context}\n"
         f"Language instruction: {language_instruction}\n"
-        f"Latest Update: {construction.current_phase} ({construction.completion_percentage}%) — {construction.recent_milestone}\n"
+        f"RIVERWOOD KNOWLEDGE BASE (Latest Update): Phase: {construction.current_phase} ({construction.completion_percentage}%) — {construction.recent_milestone}\n"
         f"{visit_info}\n\n"
         "Rules:\n"
         "1. Keep responses VERY concise (1-2 sentences max). You are on a phone call.\n"
-        "2. Answer their questions based on the Latest Update.\n"
+        "2. Answer their questions based ONLY on the Riverwood Knowledge base. Do not make up info.\n"
         "3. If they say goodbye, acknowledge it and say a polite goodbye so the call can end."
     )
     return prompt
@@ -34,12 +34,17 @@ def build_system_prompt(user, construction, is_returning):
 def build_first_message(user, is_returning):
     first_name = user.name.split()[0]
     if is_returning:
-        if user.language == "hi":
-            return f"Namaste {first_name} ji! Main Akanksha bol raha hoon Riverwood se. Aapke project ke naye updates aaye hain. Kya aap free hain baat karne ke liye?"
-        return f"Hi {first_name}! Welcome back, it's Akanksha from Riverwood. I have a new construction update for you. Are you free to talk?"
+        if user.site_visit_interest:
+            if user.language == "hi":
+                return f"Namaste {first_name} ji! Main Akanksha bol rahi hoon Riverwood se. Aapne pichli baar site visit mein interest dikhaya tha. Kya aana final hai?"
+            return f"Hi {first_name}! It's Akanksha from Riverwood again. I see you were interested in a site visit recently. Are you still planning to come?"
+        else:
+            if user.language == "hi":
+                return f"Namaste {first_name} ji! Main Akanksha bol rahi hoon Riverwood se. Aapke project ke naye updates aaye hain. Kya aap free hain baat karne ke liye?"
+            return f"Hi {first_name}! Welcome back, it's Akanksha from Riverwood. I have a new construction update for you. Are you free to talk?"
     else:
         if user.language == "hi":
-            return f"Namaste! Kya main {first_name} ji se baat kar raha hoon? Main Akanksha hoon Riverwood Projects se."
+            return f"Namaste! Kya main {first_name} ji se baat kar rahi hoon? Main Akanksha hoon Riverwood Projects se."
         return f"Hi {first_name}! I'm Akanksha from Riverwood Projects. Am I speaking with {user.name}?"
 
 async def trigger_outbound_call(user_id: str):
@@ -47,6 +52,8 @@ async def trigger_outbound_call(user_id: str):
     db = SessionLocal()
     try:
         user = db.query(User).filter(User.id == user_id).first()
+        if not user:
+            raise ValueError(f"User {user_id} not found in database. Please run 'python seed_db.py' first.")
         
         # Check if they have been called before
         past_calls = db.query(CallLog).filter(CallLog.user_id == user_id).count()
@@ -90,6 +97,20 @@ async def process_user_speech(user_id: str, user_speech: str):
             "yes",
             "sure"
         ]
+        
+        busy_keywords = [
+            "busy",
+            "not right now",
+            "call later",
+            "don't have time",
+            "wrong number",
+            "cut the call",
+            "not interested",
+            "baad mein call karna",
+            "abhi time nahi",
+            "mat karo call",
+            "stop calling"
+        ]
 
         should_hangup = False
         lang_code = "hi" if user.language == "hi" else "en"
@@ -97,6 +118,18 @@ async def process_user_speech(user_id: str, user_speech: str):
         # 1. Save what the user just said
         db.add(Interaction(user_id=user_id, role="user", content=user_speech))
         db.commit()
+
+        # Check if the user is busy or doesn't want to talk
+        if any(word in user_speech_lower for word in busy_keywords):
+            canned_key = f"busy_fallback_{lang_code}"
+            assistant_text = "I understand you are busy. I will call you back later. Have a wonderful day!" if lang_code == "en" else "Maaf kijiye, main aapko baad mein call karungi. Aapka din shubh ho!"
+            
+            audio_path = get_or_create_canned(canned_key, lang=lang_code)
+            should_hangup = True
+            
+            db.add(Interaction(user_id=user_id, role="assistant", content=assistant_text))
+            db.commit()
+            return audio_path, assistant_text, should_hangup
 
         if any(word in user_speech_lower for word in visit_keywords) and not user.site_visit_interest:
             user.site_visit_interest = True

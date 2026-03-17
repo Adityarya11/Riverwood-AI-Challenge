@@ -7,7 +7,7 @@ SEED_USERS = {
         "id": "user_001",
         "name": "Aditya",
         "phone": "+917903604458",
-        "language": "hi",
+        "language": "en",
         "project": "Riverwood Estate - Tower A",
         "unit": "3BHK - 12th Floor, Unit 1204",
         "booking_date": "2025-03-15",
