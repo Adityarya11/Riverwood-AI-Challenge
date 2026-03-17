@@ -1,10 +1,12 @@
+
+
 # Riverwood AI Voice Agent
-
-
 
 ## Architecture Overview
 
-\\	ext
+
+
+```text
 [ Admin / Scheduler ]
         | (POST /trigger/{user_id})
         v
@@ -19,40 +21,41 @@
         | (TwiML / REST)                  | (SpeechResult Webhook)
         v                                 |
 +---------------------------------------------------+
-|                  Twilio Voice API                 |
+|                 Twilio Voice API                  |
 |  (Handles PSTN connectivity, Gather, recording)   |
 +---------------------------------------------------+
         |
         v
 [ Customer Phone ]
-\
+```
+
 ## Core Functionalities
 
 ### 1. Persistent Conversational Memory
 The agent utilizes an integrated SQLite + SQLAlchemy database to persist user state across multiple distinct phone calls. 
-- Database Models track User details, CRM flags (site_visit_interest), ConstructionUpdate records, and chronologically mapped Interaction chat histories.
-- Returning User Logic: If the system initiates a call to a returning user, it acknowledges previous context rather than repeating standard scripted greetings.
+* **Database Models:** Track User details, CRM flags (`site_visit_interest`), `ConstructionUpdate` records, and chronologically mapped `Interaction` chat histories.
+* **Returning User Logic:** If the system initiates a call to a returning user, it acknowledges previous context rather than repeating standard scripted greetings.
 
 ### 2. Immediate "Busy Customer" Fallback
 To handle real-world telephonic rejections efficiently without expending LLM tokens or incurring text-to-speech generation latency:
-- The system scans real-time transcriptions for rejection markers ("busy", "call later", "wrong number", "cut the call").
-- If detected, it entirely bypasses the LLM processing and immediately streams a pre-generated, zero-latency MP3 audio file.
-- An automatic <Hangup> signal is fired back to Twilio to cleanly end the call within milliseconds.
+* The system scans real-time transcriptions for rejection markers ("busy", "call later", "wrong number", "cut the call").
+* If detected, it entirely bypasses the LLM processing and immediately streams a pre-generated, zero-latency MP3 audio file.
+* An automatic `<Hangup>` signal is fired back to Twilio to cleanly end the call within milliseconds.
 
 ### 3. Real-Time Intent Extraction & CRM Updating
 As the user speaks, the system concurrently analyzes the transcription for context intent:
-- If an agreement to a site visit is detected, the site_visit_interest boolean is permanently committed to the database.
-- A pre-cached confirmation message is dispatched with zero generation delay before gracefully terminating the call.
+* If an agreement to a site visit is detected, the `site_visit_interest` boolean is permanently committed to the database.
+* A pre-cached confirmation message is dispatched with zero generation delay before gracefully terminating the call.
 
 ### 4. Dynamic Knowledge Base Injection
 The LLM (Google Gemini 2.5 Flash) operates smoothly by dynamically reconstructing a highly optimized context window before every single interaction:
-- Injects the system prompt to enforce persona consistency.
-- Appends the latest construction phase, precise percentage completion, and available visiting hours.
-- Appends the last 10 interactions of historical conversation to maintain timeline continuity.
+* Injects the system prompt to enforce persona consistency.
+* Appends the latest construction phase, precise percentage completion, and available visiting hours.
+* Appends the last 10 interactions of historical conversation to maintain timeline continuity.
 
 ## System Call Flow
 
-\\	ext
+```text
 1. OUTBOUND TRIGGER
    Backend -> Initiates Call via Twilio API -> Plays Greeting (gTTS)
    
@@ -72,20 +75,21 @@ The LLM (Google Gemini 2.5 Flash) operates smoothly by dynamically reconstructin
        
 4. CONTINUATION
    Twilio plays generated audio -> Loops back to <Gather> unless termination flagged.
-\
+```
+
 ## Tech Stack
 
 | Component | Technology | Purpose |
 | :--- | :--- | :--- |
-| Backend Framework | FastAPI (Python) | API routing, webhook processing, state management |
-| Telephony & STT | Twilio | PSTN network interface and Speech-to-Text inference |
-| LLM Engine | Google Gemini 2.5 Flash | Conversational generation (asynchronous HTTP integration) |
-| Text-to-Speech | gTTS (Google TTS) | Native low-overhead audio file output |
-| Database / Memory | SQLite + SQLAlchemy | Strict persistence for profiles, states, and history logs |
+| **Backend Framework** | FastAPI (Python) | API routing, webhook processing, state management |
+| **Telephony & STT** | Twilio | PSTN network interface and Speech-to-Text inference |
+| **LLM Engine** | Google Gemini 2.5 Flash | Conversational generation (asynchronous HTTP integration) |
+| **Text-to-Speech** | gTTS (Google TTS) | Native low-overhead audio file output |
+| **Database / Memory** | SQLite + SQLAlchemy | Strict persistence for profiles, states, and history logs |
 
 ## Project Structure
 
-\\	ext
+```text
 riverwood-ai-challenge/
 |-- agent.py             # Core prompt assembly, DB integration, and intent mapping
 |-- db.py                # Database configurations and declarative schema design
@@ -95,27 +99,6 @@ riverwood-ai-challenge/
 |-- tts.py               # Text-to-Speech serialization and latent caching map
 |-- seed_db.py           # Populates environment base for demonstration mock-data
 |-- trigger_call.py      # Entry-point for test environment orchestration
-\-- requirements.txt     # Environment dependencies
-\
-## Execution Environment
+`-- requirements.txt     # Environment dependencies
+```
 
-1. Dependency Configuration:
-   \\ash
-   pip install -r requirements.txt
-   \2. Environment Declaration (.env):
-   \\	ext
-   TWILIO_ACCOUNT_SID=...
-   TWILIO_AUTH_TOKEN=...
-   TWILIO_PHONE_NUMBER=...
-   GEMINI_API_KEY=...
-   NGROK_URL=https://...
-   \3. Initialize the persistence schema:
-   \\ash
-   python seed_db.py
-   \4. Bind application processes:
-   \\ash
-   uvicorn main:app --port 8000
-   \5. Initiate demonstration script:
-   \\ash
-   python trigger_call.py
-   \
