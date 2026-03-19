@@ -6,6 +6,7 @@ from twilio.twiml.voice_response import VoiceResponse, Gather
 from agent import trigger_outbound_call, process_user_speech
 from db import Base, engine
 from dotenv import load_dotenv
+from vapi_handler import vapi_router
 
 load_dotenv()
 Base.metadata.create_all(bind=engine)
@@ -13,6 +14,7 @@ Base.metadata.create_all(bind=engine)
 os.makedirs(os.getenv("TTS_OUTPUT_DIR", "./audio"), exist_ok=True)
 
 app = FastAPI(title="Riverwood Voice Agent Prototype")
+app.include_router(vapi_router)
 app.mount("/static", StaticFiles(directory=os.getenv("TTS_OUTPUT_DIR", "./audio")), name="static")
 
 @app.get("/health")
