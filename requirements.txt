@@ -1,8 +1,32 @@
+# Web framework
 fastapi
 uvicorn[standard]
+
+# Database + ORM
 sqlalchemy
+
+# HTTP client (async — for OpenAI, VAPI, ElevenLabs REST calls)
 httpx
+
+# Environment management
 python-dotenv
-gTTS
-twilio
+
+# ── AI / LLM ──────────────────────────────────────────────────────────────────
+openai>=1.30.0          # GPT-4o-mini streaming
+
+# ── Text-to-Speech ─────────────────────────────────────────────────────────────
+gTTS                    # Twilio fallback TTS (free, no API key needed)
+# elevenlabs            # Optional: install if using ElevenLabs Python SDK
+                        # VAPI handles ElevenLabs TTS natively — no SDK needed
+
+# ── Telephony ─────────────────────────────────────────────────────────────────
+twilio                  # PSTN connectivity + fallback webhook handling
+
+# ── Hot Memory / Cache ────────────────────────────────────────────────────────
+redis>=5.0.0            # Redis client for L1 hot memory cache
+
+# ── Task queue (1000-call bulk dispatch) ──────────────────────────────────────
+celery[redis]           # Distributed task queue backed by Redis
+
+# ── Validation ────────────────────────────────────────────────────────────────
 pydantic
