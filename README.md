@@ -1,3 +1,12 @@
+> [!IMPORTANT]  
+> **🚨 ARCHIVED & MIGRATED 🚨**
+>
+> This repository contains an early prototype of the voice agent that relied on external third-party APIs (Twilio/VAPI).
+>
+> I have since overhauled this entirely and architected a completely **self-hosted, distributed, high-concurrency runtime** built from the ground up in Go and Python. It features concurrent STT, LLM, and TTS inference with zero external API dependencies.
+>
+> 🚀 **Please visit the new, active project here:** [Voice Agent Runtime](https://github.com/Adityarya11/voice-agent-runtime)
+
 # AI Voice Calling Agent
 
 AI Voice Calling Agent is a low-latency, stateful, and concurrency-ready voice automation system for outbound customer conversations.
@@ -68,12 +77,11 @@ Parallel system components:
 
 ## Tech Stack
 
-| Component | Technology | Purpose |
-| :--- | :--- | :--- |
-| Backend Framework | FastAPI (Python) | API orchestration, webhook handling, call flow control |
-| Telephony Layer | VAPI + Twilio | Outbound calling, call events, speech capture |
-| LLM Engine | OpenAI GPT-4o-mini | Contextual conversational response generation |
-| Text-to-Speech | ElevenLabs (via VAPI) + gTTS fallback | Real-time voice output and fallback speech generation |
-| Memory Layer | Redis + SQLite (SQLAlchemy) | Hot context retrieval and persistent history |
-| Concurrency Layer | Celery + Redis | Queue-based worker execution and bulk dispatch |
-
+| Component         | Technology                            | Purpose                                                |
+| :---------------- | :------------------------------------ | :----------------------------------------------------- |
+| Backend Framework | FastAPI (Python)                      | API orchestration, webhook handling, call flow control |
+| Telephony Layer   | VAPI + Twilio                         | Outbound calling, call events, speech capture          |
+| LLM Engine        | OpenAI GPT-4o-mini                    | Contextual conversational response generation          |
+| Text-to-Speech    | ElevenLabs (via VAPI) + gTTS fallback | Real-time voice output and fallback speech generation  |
+| Memory Layer      | Redis + SQLite (SQLAlchemy)           | Hot context retrieval and persistent history           |
+| Concurrency Layer | Celery + Redis                        | Queue-based worker execution and bulk dispatch         |
